@@ -1,0 +1,497 @@
+はじめに
+
+ここではメジャーなパーサジェネレータflex & bisonをC++から使う方法を考えてみます。
+この二つのジェネレータはどちらももともとC言語用に開発されましたが、
+再入可能性などはあまり深く考えられていませんでした。
+
+また、C++から利用する場合にはいくつか不便なところがありました。
+
+ここではよりC++と親和性の高いflex & bisonの使い方を考えます。
+最終的にはヘッダーファイル一つといくつかの手順を守ることで、手軽にパーサクラスを作成できるようになりました。
+
+
+とりあえずflexとbisonについて
+
+flexとbisonはどちらもGNUの開発しているユーティリティで、それぞれレキサ（トークナイザ：字句解析器）
+とパーサ（構文解析器）を生成するジェネレータです。
+
+これらは元々AT&Tで開発されたlexとyaccを元にしており、
+それぞれの仕様に従った文法で定義を書いていけば、最終的にC言語のプログラムをはき出してくれます。
+
+たとえば、以下はflexで数値と文字列を切り出すプログラムです。
+
+
+%{
+#include <stdio.h>
+%}
+%%
+[0-9][0-9]* { printf("number:%d\n", atoi(yytext)); }
+[a-zA-Z][0-9a-zA-Z]* { printf("string:%s\n", yytext); }
+%%
+int main()
+{
+  yylex();
+  return 0;
+}
+
+このように、正規表現を使ってトークン（字句）を定義すれば、それが現れた時に該当する処理を起動させることができます。
+
+このファイルを"hoge.l"として保存すると、
+
+flex hoge.l
+cc lex.yy.c
+のようにしてコンパイルできます。
+
+同様に、簡単なbisonのプログラムを示すと、
+
+
+%{
+#include <stdio.h>
+%}
+%union {
+  double number_;
+}
+%token <number_> NUMBER
+%type <number_> expr, additive_expr, multiplicative_expr, primary
+%%
+answer
+  : expr
+  { printf("answer=%f\n", $1); }
+  ;
+expr
+  : additive_expr
+  ;
+additive_expr
+  : multiplicative_expr
+  | additive_expr '+' multiplicative_expr
+  { $$ = $1 + $3; }
+  | additive_expr '-' multiplicative_expr
+  { $$ = $1 - $3; }
+  ;
+multiplicative_expr
+  : primary
+  | multiplicative_expr '*' primary
+  { $$ = $1 * $3; }
+  | multiplicative_expr '/' primary
+  { $$ = $1 / $3; }
+  ;
+primary
+  : NUMBER
+  | '(' expr ')'
+  { $$ = $2; }
+  ;
+%%
+int yywrap() { return 0; }
+int main() { yyparse(); return 0; }
+
+
+これは四則演算をするbisonプログラムです。
+末尾に見慣れたmain関数がありますが、その中で読んでいるyyparse関数というものこそ、
+bisonが生成する構文解析器の本体です。
+
+
+
+flexとC++
+
+さて上で見たように、flexとbisonの基本動作は、指定されたタイミングで与えられたC言語のコード断片を実行するものです。
+この断片をC++で記述することもできます。やってみましょう。
+
+
+%{
+#include <iostream>
+%}
+%%
+[0-9][0-9]* { std::cout << "number:" <%lt; atoi(yytext) << std::endl; }
+[a-zA-Z][0-9a-zA-Z]* { std::cout << "string:" <%lt; yytext << std::endl; }
+%%
+int main()
+{
+  yylex();
+  return 0;
+}
+
+flex hoge.l
+c++ lex.yy.c
+
+これはこれで良いのですが、実はflexにはC++サポートが備わっています（ずーっと『実験的なもの』とされ続けていますが）ので、
+これを利用してみます。 
+
+やり方はコマンドラインで引数-+を与えるか、%option c++を追加するだけです。
+ここでは後者を用いています。
+
+ちなみに環境によってはflex++というコマンドが用意されている場合もあります。
+これはflexを-+オプションつきで呼び出したのと同じ動きをします。
+
+
+%{
+#include <iostream>
+%}
+%option c++
+%%
+[0-9][0-9]* { std::cout << "number:" <%lt; atoi(yytext) << std::endl; }
+[a-zA-Z][0-9a-zA-Z]* { std::cout << "string:" <%lt; yytext << std::endl; }
+%%
+int main()
+{
+  FlexLexer* lexer = new yyFlexLexer();
+  lexer->parse();
+  return 0;
+}
+
+呼び出し側のコードを多少書き換える必要がありますが、まあほとんど変えていません。
+
+flexのC++対応で何がうれしいかというと、iostreamを使えるようになる点が上げられます。
+
+従来のflexでは、データの入出力はC言語のファイル操作関数を用いていました。
+
+yyin/yyoutというFILE*型の広域変数が用意されており、これに任意のファイルハンドルを代入させることで、
+入力を切り替える事ができました。
+
+
+int main()
+{
+  FILE* fp = fopen("hoge.input", "rb");
+  yyin = fp;
+  yylex();
+  close(fp);
+  return 0;
+}
+…が、C++版では以下のようになります。
+
+
+int main()
+{
+  FlexLexer* lexer = new yyFlexLexer();
+  std::ifstream in("hoge.input" std::ios::binary);
+  lexer->switch_stream(&in);  
+  lexer->parse();
+  return 0;
+}
+
+iostreamでさえあれば、その先が何であっても同様に渡すことができます。
+std::fstream/std::stringstreamはもちろん、自作のストリームも渡すことができます。
+
+
+
+bisonとC++ --- 仲の悪い二人
+
+flexがC++をサポートしたとなれば、そのflexを利用するbisonもC++サポートがついて当然。
+flexがflex++なら、bisonはbison++だ！…と考えるのは自然です。
+
+ところが、どうも話はそう簡単ではないのです。
+
+まず、bisonに埋め込むコード断片は、C++で記述することができます。
+これはflexの時と同様です。
+
+しかし、bisonにはflexでいう-+オプションや%optionc++といった命令は用意されていません。
+
+最も痛いのは、bisonがflexが出力したC++コードを標準でサポートしていない点です。
+これは、ラッパ関数を用意することで切り抜けられます。
+
+
+inline int yylex() {
+	return yyFlexLexer().yylex();
+}
+
+が、試してみると分かりますが、これでは上手く行きません。
+なぜなら、yyFlexLexerのオブジェクトをyylex関数の呼び出しごとに生成するため、
+yyFlexLexerが内部で持っている先読み情報が失われてしまうからです。
+
+正しくスキャンするためには、一つのyyFlexLexerインスタンスを使い回す必要があります。
+
+たとえば広域変数を一つ用いることで、上手く回避できます。
+
+
+%{
+#include <iostream>
+#include <FlexLexer.h>
+
+FlexLexer* lexer = NULL;
+inline int yylex() { return ((FlexLexer*)lexer)->yylex(); }
+%}
+%union {
+  double number_;
+}
+%token <number_> NUMBER
+%type <number_> expr, additive_expr, multiplicative_expr, primary
+%%
+answer
+  : expr
+  { printf("answer=%f\n", $1); }
+  ;
+expr
+  : additive_expr
+  ;
+additive_expr
+  : multiplicative_expr
+  | additive_expr '+' multiplicative_expr
+  { $$ = $1 + $3; }
+  | additive_expr '-' multiplicative_expr
+  { $$ = $1 - $3; }
+  ;
+multiplicative_expr
+  : primary
+  | multiplicative_expr '*' primary
+  { $$ = $1 * $3; }
+  | multiplicative_expr '/' primary
+  { $$ = $1 / $3; }
+  ;
+primary
+  : NUMBER
+  | '(' expr ')'
+  { $$ = $2; }
+  ;
+%%
+int yywrap() { return 0; }
+int main() { lexer = new yyFlexLexer(); yyparse(); return 0; }
+
+
+
+再入可能なパーサとFlexLexerの拡張
+（予定）
+
+BisonParser.h
+ということで、こういうヘッダを用意してみました。
+これをflexとbisonの両方のソースファイルからインクルードすると、Parserクラスができあがります。
+
+最終的には以下のようになりました。
+
+
+%{
+#include <iostream>
+#include <BisonParser.h>
+%}
+%option c++
+%%
+[0-9][0-9]* { std::cout << "number:" <%lt; atoi(yytext) << std::endl; return NUMBER; }
+[a-zA-Z][0-9a-zA-Z]* { std::cout << "string:" <%lt; yytext << std::endl; }
+%%
+
+%{
+#include <iostream>
+#include <BisonParser.h>
+%}
+%union {
+  double number_;
+}
+%token <number_> NUMBER
+%type <number_> expr, additive_expr, multiplicative_expr, primary
+%%
+answer
+  : expr
+  { printf("answer=%f\n", $1); }
+  ;
+expr
+  : additive_expr
+  ;
+additive_expr
+  : multiplicative_expr
+  | additive_expr '+' multiplicative_expr
+  { $$ = $1 + $3; }
+  | additive_expr '-' multiplicative_expr
+  { $$ = $1 - $3; }
+  ;
+multiplicative_expr
+  : primary
+  | multiplicative_expr '*' primary
+  { $$ = $1 * $3; }
+  | multiplicative_expr '/' primary
+  { $$ = $1 / $3; }
+  ;
+primary
+  : NUMBER
+  | '(' expr ')'
+  { $$ = $2; }
+  ;
+%%
+int yywrap() { return 0; }
+int main() { Parser parser; parser.parse(); return 0; }
+
+
+
+
+
+
+
+--------------
+
+
+C++ スキャナの生成
+
+flex は 2 通りの C++ スキャナ生成方法を提供します。
+
+最初の方法は flex が生成したスキャナを単に C コンパイラではなく C++ コンパイラでコンパイルするというものです。
+この場合コンパイルエラーには出会わないはずです (見付けた場合には作者の節で後述する電子メールアドレスに報告して下さい)。
+この場合ルールにおいて C コードではなく C++ コードを書くことが出来ます。
+
+スキャナのデフォルトの入力元は yyin のままであり、デフォルトのエコー先は yyout のままであることに注意して下さい。
+どちらも FILE * 変数のままであり、C++ streams ではないです。  
+
+flex に C++ スキャナクラスを生成させることも出来ます。 
+-+ オプションを指定する(もしくは等価的に %optionc++ を使う)とこのように実行され、 
+flex の実行形式名が '+' で終っている場合には自動的に指定されます。
+
+このオプションを指定すると flex が生成するスキャナのデフォルトはファイル lex.yy.cc となり lex.yy.c ではありません。
+生成されたスキャナは 2 つの C++ クラスとのインタフェースを定義するヘッダファイル FlexLexer.h をインクルードします。
+
+
+最初のクラス FlexLexer は一般的なスキャナクラスを定義する抽象基盤クラスを提供します。
+以下のメンバ関数を提供します: 
+
+const char* YYText() 
+	  最後にマッチしたテキストを返します。 yytext と等価です。 
+
+int YYLeng() 
+	最後にマッチしたトークンの長さを返します。 yyleng と等価です。 
+
+int lineno() const 
+	現在の入力の行番号( %option yylineno 参照)もしくは %option yylineno を使用していない場合には 1 を返します。 
+
+void set_debug( int flag ) 
+	 スキャナのデバッグフラグをセットします。 
+	 yy_flex_debug に代入するのと同じです(オプションの節で前述)。
+	 スキャナ構築時に %option debug を使用してデバッグ情報を組み込む必要があることに注意して下さい。 
+
+int debug() const 
+	現在のデバッグフラグの設定を返します。 
+
+
+また次のものと等価なメンバ関数も提供されます 
+yy_switch_to_buffer(), yy_create_buffer() (最初の引数は istream* オブジェクトポインタであり FILE* ではありません), 
+yy_flush_buffer(), yy_delete_buffer(), yyrestart() (これもまた最初の引数は istream* オブジェクトポインタです)。 
+
+
+2 番目のクラスは FlexLexer.h で定義される yyFlexLexer であり、 FlexLexer から導出したものです。
+以下の追加のメンバ関数を定義します: 
+
+
+yyFlexLexer( istream* arg_yyin = 0, ostream* arg_yyout = 0 ) 
+			 与えられた入出力ストリームを使う yyFlexLexer オブジェクトを構築します。
+			 指定しない場合にはそれぞれストリームのデフォルト cin と cout になります。 
+
+virtual int yylex() 
+
+		これは yylex() が通常の flex スキャナに対して行ったのと同様の役割を担います: 
+		ルールのアクションが値を返すまで、入力ストリームをスキャンし、トークンを消費します。 
+
+		yyFlexLexer からサブクラスS を導出し yylex() から S のメンバ関数および変数をアクセスしたい場合、 
+		%option yyclass=S を指定して yyFlexLexer ではなくサブクラスを使用することを flex に知らせる必要があります。
+		
+		この場合	yyFlexLexer::yylex() を生成するのではなく、 flex は S::yylex() 
+			(および呼び出されたなら yyFlexLexer::LexerError() を呼び出すダミーの yyFlexLexer::yylex() も)を生成します。
+
+
+virtual void switch_streams(istream* new_in = 0, ostream* new_out = 0) 
+		yyin を new_in (非ニルの場合) に再割当し、 yyout を new_out (同様)に再割当します。 
+		yyin が再割当された場合には以前の入力バッファは消去されます。 
+
+int yylex( istream* new_in, ostream* new_out = 0 ) 
+	まず入力ストリームを switch_streams( new_in, new_out ) を使用して切り替え、 yylex() の値を返します。 
+
+
+
+さらに、 yyFlexLexer は次のプロテクトされた仮想関数を定義します。スキャナにあわせてこれらを導出クラスにおいて再定義出来ます: 
+
+virtual int LexerInput( char* buf, int max_size ) 
+
+		最大 max_size 文字を buf に読み込み、読めた文字数を返します。入力の終りを示すには 0 文字を返します。
+		"対話的" スキャナ( -B と -I フラグを参照)はマクロ YY_INTERACTIVE を定義することに注意して下さい。 
+		LexerInput()を再定義し、対話的な入力元をスキャンする可能性があるかどうかに依存して異なるアクションが必要となる場合、
+		この名前が存在するかどうかのテストは#ifdef にて可能です。
+
+virtual void LexerOutput( const char* buf, int size ) 
+		size 文字をバッファ buf から書き出します。
+		スキャナのルールが NUL を含むテキストにマッチ可能な場合、 NUL 終端されているこのバッファは "内部に" NUL を含んでいても構いません。 
+
+virtual void LexerError( const char* msg ) 
+		致命的なエラーメッセージを報告します。デフォルトのこの関数はメッセージをストリーム cerr に書き、終了します。 
+
+
+
+yyFlexLexer オブジェクトは 全ての スキャン時の状態を含むことに注意して下さい。
+それゆえこの様なオブジェクトをリエントラントなスキャナとして使用できます。
+同一の yyFlexLexer クラスの複数のインスタンスを具体化可能であり、
+複数の C++ スキャナクラスを組み合わせ上記 -P オプションを使用することで同一のプログラムで使用可能です。
+
+
+最後に %array 機能は C++ スキャナクラスでは使用できないことに注意して下さい; 
+%pointer を使用しなければなりません(デフォルト)。 
+
+
+
+単純な C++ スキャナの例を以下に示します: 
+
+
+        // An example of using the flex C++ scanner class.
+
+    %{
+    int mylineno = 0;
+    %}
+
+    string  \"[^\n"]+\"
+
+    ws      [ \t]+
+
+    alpha   [A-Za-z]
+    dig     [0-9]
+    name    ({alpha}|{dig}|\$)({alpha}|{dig}|[_.\-/$])*
+    num1    [-+]?{dig}+\.?([eE][-+]?{dig}+)?
+    num2    [-+]?{dig}*\.{dig}+([eE][-+]?{dig}+)?
+    number  {num1}|{num2}
+
+    %%
+
+    {ws}    /* skip blanks and tabs */
+
+    "/*"    {
+            int c;
+
+            while((c = yyinput()) != 0)
+                {
+                if(c == '\n')
+                    ++mylineno;
+
+                else if(c == '*')
+                    {
+                    if((c = yyinput()) == '/')
+                        break;
+                    else
+                        unput(c);
+                    }
+                }
+            }
+
+    {number}  cout << "number " << YYText() << '\n';
+
+    \n        mylineno++;
+
+    {name}    cout << "name " << YYText() << '\n';
+
+    {string}  cout << "string " << YYText() << '\n';
+
+    %%
+
+    int main( int /* argc */, char** /* argv */ )
+        {
+        FlexLexer* lexer = new yyFlexLexer;
+        while(lexer->yylex() != 0)
+            ;
+        return 0;
+        }
+
+
+複数の(異なった)字句解析クラスを生成したい場合、 -P フラグ (もしくは prefix= オプション) を使用して各 yyFlexLexer を xxFlexLexer 等の別の名前にします。
+次に字句解析クラスのソースごとに <FlexLexer.h> をインクルードします。以下のように yyFlexLexer をリネームします: 
+
+    #undef yyFlexLexer
+    #define yyFlexLexer xxFlexLexer
+    #include <FlexLexer.h>
+
+    #undef yyFlexLexer
+    #define yyFlexLexer zzFlexLexer
+    #include <FlexLexer.h>
+
+
+これはあるスキャナに対し %option prefix=xx を使用しもう一方に対し %option prefix=zz を使用した場合です。 
+重要: 現在のスキャンクラスの形式は 実験的 であり、メジャーリリースが変わると大きく変更される可能性があります。   
+
