@@ -3,7 +3,9 @@
 
 %defines
 %define "parser_class_name" "Parser"
-
+%code requires {
+class ParseDriver;
+}
 %debug
 %error-verbose
 
@@ -20,7 +22,7 @@
 %{
 // 生成されるパーサのヘッダファイル(Parserクラスの定義ファイル)では
 // ParseDriverが型として必要
-class ParseDriver;
+//class ParseDriver;
 %}
 
 // Symbols.

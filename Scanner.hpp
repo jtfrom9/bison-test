@@ -21,19 +21,22 @@ class Scanner;
  * この時の仮引数は、スキャナのセマンティックアクション内で呼び出す事ができる。
 */
 #undef YY_DECL
-#define YY_DECL											\
-	yy::Parser::token_type								\
-	Scanner::scan( yy::Parser::semantic_type* value,	\
-				   yy::Parser::location_type* location,	\
-				   ParseDriver& driver)
+#define YY_DECL                                         \
+    yy::Parser::token_type                              \
+    Scanner::scan( yy::Parser::semantic_type* value,    \
+                   yy::Parser::location_type* location, \
+                   ParseDriver& driver)
 
 
 class Scanner : public yyFlexLexer {
 public:
-	Scanner( ifstream &ifs ):
-		yyFlexLexer(&ifs)
-		{}
-	YY_DECL;
+    Scanner( ifstream &ifs ):
+        yyFlexLexer(&ifs)
+        {}
+
+    yy::Parser::token_type scan( yy::Parser::semantic_type* value,
+                                  yy::Parser::location_type* location,  
+                                  ParseDriver& driver);
 };
 
 #endif
