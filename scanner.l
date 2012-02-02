@@ -52,15 +52,18 @@ blank [ \t]
 %}
 
 
-[-+*/]     return yy::Parser::token_type (yytext[0]);
+[-+*/(),]     return yy::Parser::token_type (yytext[0]);
 ":="       return token::ASSIGN;
+"module"   return token::BMODULE;
+"endmodule" return token::EMODULE;
+
 {int}      {
-	errno = 0;
-	long n = strtol (yytext, NULL, 10);
-	if (! (INT_MIN <= n && n <= INT_MAX && errno != ERANGE))
-		driver.error (*location, "integer is out of range");
-	value->ival = n;
-	return token::NUMBER;
+    errno = 0;
+    long n = strtol (yytext, NULL, 10);
+    if (! (INT_MIN <= n && n <= INT_MAX && errno != ERANGE))
+        driver.error (*location, "integer is out of range");
+    value->ival = n;
+    return token::NUMBER;
 }
 {id}       value->sval = new std::string (yytext); return token::IDENTIFIER;
 .          driver.error (*location, "invalid character");

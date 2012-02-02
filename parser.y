@@ -38,6 +38,9 @@ class ParseDriver;
 %token <ival> NUMBER     "number"
 %type  <ival> exp        "expression"
 
+%token        BMODULE
+%token        EMODULE
+
 %printer    { debug_stream () << *$$; } "identifier"
 %destructor { delete $$; } "identifier"
 %printer    { debug_stream () << $$; } "number" "expression"
@@ -79,7 +82,21 @@ yy::Parser::error(const yy::Parser::location_type& l,
 
 
 %start unit;
+
 unit: assignments exp  { driver.result = $2; };
+    | module           { cout << "OK!: " << driver.List.ToString() << endl;}
+
+module: BMODULE IDENTIFIER argument_list EMODULE { cout << "module: " << $2->c_str() << endl; }
+
+argument_list: '(' arguments ')'
+    | '(' ')'
+
+arguments: argument
+    | argument arguments
+
+argument: IDENTIFIER          { cout << $1->c_str() << endl; driver.List.Add(Argument($1->c_str())); }
+      |   IDENTIFIER ','      { cout << $1->c_str() <<", " << endl; driver.List.Add(Argument($1->c_str())); }
+
 
 assignments: assignments assignment {}
            | /* Nothing.  */        {};
